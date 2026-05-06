@@ -1,0 +1,24 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+*.egg-info/
+
+# uv cache
+.uv/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
