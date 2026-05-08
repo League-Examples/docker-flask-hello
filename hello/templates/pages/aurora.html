@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  body { margin: 0; padding: 0; overflow: hidden; display: block; }
+  .tagline { display: none; }
+  canvas { display: block; transition: opacity 300ms; }
+
+  .control-panel {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #0d0d1a;
+    border: 1px solid #00ff99;
+    color: #00ff99;
+    font-family: monospace;
+    padding: 16px;
+    border-radius: 6px;
+    z-index: 100;
+    min-width: 220px;
+  }
+  .control-panel h3 { margin: 0 0 8px; font-size: 1rem; }
+  .control-panel label { display: block; margin: 8px 0 2px; font-size: 0.85rem; }
+  .control-panel input[type=range] { width: 100%; accent-color: #00ff99; }
+  .control-panel input[type=checkbox] { accent-color: #00ff99; }
+  .control-panel button#panel-close {
+    position: absolute; top: 6px; right: 8px;
+    background: transparent; border: none; color: #00ff99;
+    font-family: monospace; font-size: 1rem; cursor: pointer;
+  }
+</style>
+<canvas id="c" data-page="aurora"></canvas>
+<div id="panel" class="control-panel" hidden>
+  <button id="panel-close" type="button" aria-label="Close">&#x2715;</button>
+  <h3>Controls</h3>
+  <label>Ribbon Count: <span id="lbl-count">7</span></label>
+  <input id="ctl-count" type="range" min="3" max="15" value="7" step="1">
+  <label>Max Amplitude: <span id="lbl-amp">0.20</span></label>
+  <input id="ctl-amp" type="range" min="0.05" max="0.35" value="0.2" step="0.01">
+  <label>Hue Speed: <span id="lbl-hue">10</span></label>
+  <input id="ctl-hue" type="range" min="0" max="10" value="10" step="0.5">
+  <label>Opacity: <span id="lbl-opacity">0.55</span></label>
+  <input id="ctl-opacity" type="range" min="0.1" max="0.8" value="0.55" step="0.05">
+  <label><input id="ctl-blur" type="checkbox"> Blur</label>
+</div>
+<script>
+  // ── Config ────────────────────────────────────────────────────────────────
+  const CFG = {
+    count:        7,
+    minAmplitude: 0.05,
+    maxAmplitude: 0.20,
+    minFrequency: 0.5,
+    maxFrequency: 3.0,
+    minOpacity:   0.15,
+    maxOpacity:   0.55,
+    minThickness: 0.08,
+    maxThickness: 0.18,
+    maxHueSpeed:  10,
+    blur:         false,
+    frozen:       false,
+  };
+
+  const TRIGGERS = {
+    transform_storm:    { type: 'key',      key: 's' },
+    transform_freeze:   { type: 'sequence', keys: ['f','r','z'] },
+    transition_boids:   { type: 'key',      key: 'b' },
+    panel:              { type: 'still',    durationMs: 3000 },
+  };
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let ribbons = [];
+  let activeTransform = null;
+  let savedCFG = null;
+  let savedRibbonState = null;
+  let keyBuffer = [];
+  let keyBufferTimer = null;
+  let mouseStillTimer = null;
+
+  function rand(min, max) { return min + Math.random() * (max - min); }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function applyTransform(id, cfg) {
+    switch (id) {
+      case 'transform_storm':
+        // All ribbons drive toward max amplitude and faster hue shift
+        cfg.maxAmplitude = 0.35;
+        cfg.maxHueSpeed = 30;
+        break;
+      case 'transform_freeze':
+        cfg.frozen = true;
+        cfg.maxOpacity = 0.8;
+        break;
+    }
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  function initRibbons() {
+    ribbons = [];
+    const count = CFG.count;
+    for (let i = 0; i < count; i++) {
+      const baseY = (i + 1) / (count + 1);
+      const amplitude = rand(CFG.minAmplitude, CFG.maxAmplitude);
+      const frequency = rand(CFG.minFrequency, CFG.maxFrequency);
+      ribbons.push({
+        baseY,
+        hue:        rand(0, 360),
+        hueSpeed:   rand(0, CFG.maxHueSpeed),
+        amplitude,
+        ampTarget:  rand(CFG.minAmplitude, CFG.maxAmplitude),
+        frequency,
+        freqTarget: rand(CFG.minFrequency, CFG.maxFrequency),
+        phase:      rand(0, Math.PI * 2),
+        phaseSpeed: rand(0.3, 1.2),
+        opacity:    rand(CFG.minOpacity, CFG.maxOpacity),
+        thickness:  rand(CFG.minThickness, CFG.maxThickness),
+      });
+    }
+  }
+
+  function updateRibbons(dt) {
+    const dtSec = dt / 1000;
+    for (const r of ribbons) {
+      if (!CFG.frozen) {
+        r.phase += r.phaseSpeed * dtSec;
+        r.amplitude += (r.ampTarget  - r.amplitude)  * 0.005;
+        r.frequency += (r.freqTarget - r.frequency)  * 0.005;
+        if (Math.random() < 0.002) r.ampTarget  = rand(CFG.minAmplitude, CFG.maxAmplitude);
+        if (Math.random() < 0.002) r.freqTarget = rand(CFG.minFrequency, CFG.maxFrequency);
+        r.hue = (r.hue + r.hueSpeed * dtSec) % 360;
+      }
+
+      r.amplitude  = clamp(r.amplitude,  CFG.minAmplitude, CFG.maxAmplitude);
+      r.ampTarget  = clamp(r.ampTarget,  CFG.minAmplitude, CFG.maxAmplitude);
+      r.frequency  = clamp(r.frequency,  CFG.minFrequency, CFG.maxFrequency);
+      r.freqTarget = clamp(r.freqTarget, CFG.minFrequency, CFG.maxFrequency);
+      r.opacity    = clamp(r.opacity,    CFG.minOpacity,   CFG.maxOpacity);
+      r.thickness  = clamp(r.thickness,  CFG.minThickness, CFG.maxThickness);
+      r.hueSpeed   = clamp(r.hueSpeed,   0,                CFG.maxHueSpeed);
+      r.hue        = ((r.hue % 360) + 360) % 360;
+    }
+  }
+
+  // ── Canvas / context references ───────────────────────────────────────────
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+  let W = canvas.width  = window.innerWidth;
+  let H = canvas.height = window.innerHeight;
+
+  // ── Rendering ─────────────────────────────────────────────────────────────
+  function buildRibbonPath(ctx, ribbon, W, H) {
+    const centerY = ribbon.baseY * H;
+    const halfH   = ribbon.thickness * H / 2;
+    const ampPx   = ribbon.amplitude * H;
+    const steps   = 200;
+    const topPts = [];
+    const botPts = [];
+    for (let i = 0; i <= steps; i++) {
+      const x = (i / steps) * W;
+      const t = (x / W) * ribbon.frequency * 2 * Math.PI + ribbon.phase;
+      const y = centerY + Math.sin(t) * ampPx;
+      topPts.push([x, y - halfH]);
+      botPts.push([x, y + halfH]);
+    }
+    ctx.beginPath();
+    ctx.moveTo(topPts[0][0], topPts[0][1]);
+    for (let i = 1; i < topPts.length; i++) ctx.lineTo(topPts[i][0], topPts[i][1]);
+    for (let i = botPts.length - 1; i >= 0; i--) ctx.lineTo(botPts[i][0], botPts[i][1]);
+    ctx.closePath();
+  }
+
+  function buildRibbonGradient(ctx, ribbon, H) {
+    const centerY = ribbon.baseY * H;
+    const halfH   = ribbon.thickness * H / 2;
+    const ampPx   = ribbon.amplitude * H;
+    const grad = ctx.createLinearGradient(
+      0, centerY - halfH - ampPx,
+      0, centerY + halfH + ampPx
+    );
+    const h = ribbon.hue, op = ribbon.opacity;
+    grad.addColorStop(0,   `hsla(${h},               80%, 60%, 0)`);
+    grad.addColorStop(0.3, `hsla(${h},               80%, 60%, ${op})`);
+    grad.addColorStop(0.5, `hsla(${(h + 30) % 360}, 75%, 55%, ${op})`);
+    grad.addColorStop(0.7, `hsla(${(h + 60) % 360}, 70%, 50%, ${op})`);
+    grad.addColorStop(1,   `hsla(${h},               80%, 60%, 0)`);
+    return grad;
+  }
+
+  // Faint clues: dim star pattern at top-left and one ribbon-width segment
+  // rendered with a slightly anomalous color. Both globalAlpha ≤ 0.25.
+  function drawClues(ctx, W, H) {
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#ffffff';
+    // Clue 1: a small dim "constellation" of 5 stars
+    const stars = [
+      [W * 0.08, H * 0.10],
+      [W * 0.11, H * 0.14],
+      [W * 0.07, H * 0.17],
+      [W * 0.13, H * 0.18],
+      [W * 0.10, H * 0.21],
+    ];
+    for (const [x, y] of stars) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Clue 2: a faint anomalous-color short ribbon segment near the bottom
+    ctx.globalAlpha = 0.20;
+    ctx.fillStyle = '#ff66cc';
+    const segW = W * 0.12, segH = 6;
+    ctx.fillRect(W - segW - 30, H - 40, segW, segH);
+
+    ctx.restore();
+  }
+
+  function drawRibbons() {
+    ctx.clearRect(0, 0, W, H);
+    if (CFG.blur) ctx.filter = 'blur(4px)';
+    for (const ribbon of ribbons) {
+      buildRibbonPath(ctx, ribbon, W, H);
+      ctx.fillStyle = buildRibbonGradient(ctx, ribbon, H);
+      ctx.fill();
+    }
+    if (CFG.blur) ctx.filter = 'none';
+    drawClues(ctx, W, H);
+  }
+
+  // ── Easter egg handlers ───────────────────────────────────────────────────
+  function handleTransform(id) {
+    if (activeTransform === id) {
+      Object.assign(CFG, savedCFG);
+      savedCFG = null;
+      activeTransform = null;
+    } else {
+      if (savedCFG !== null) Object.assign(CFG, savedCFG);
+      savedCFG = Object.assign({}, CFG);
+      applyTransform(id, CFG);
+      activeTransform = id;
+    }
+  }
+
+  function handleTransition(url) {
+    canvas.style.opacity = '0';
+    setTimeout(() => { window.location.href = url; }, 300);
+  }
+
+  function handlePanelToggle() {
+    const panel = document.getElementById('panel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+  }
+
+  function dispatchTrigger(id) {
+    if (id === 'panel') return handlePanelToggle();
+    if (id === 'transition_boids') return handleTransition('/boids');
+    if (id.startsWith('transform_')) return handleTransform(id);
+  }
+
+  function onKeyDown(e) {
+    keyBuffer.push(e.key);
+    if (keyBuffer.length > 20) keyBuffer.shift();
+    clearTimeout(keyBufferTimer);
+    keyBufferTimer = setTimeout(() => { keyBuffer = []; }, 3000);
+
+    for (const [id, trig] of Object.entries(TRIGGERS)) {
+      if (trig.type !== 'sequence') continue;
+      const seq = trig.keys;
+      if (keyBuffer.length >= seq.length) {
+        const tail = keyBuffer.slice(-seq.length);
+        if (tail.every((k, i) => k === seq[i])) {
+          keyBuffer = [];
+          clearTimeout(keyBufferTimer);
+          dispatchTrigger(id);
+          return;
+        }
+      }
+    }
+    for (const [id, trig] of Object.entries(TRIGGERS)) {
+      if (trig.type === 'key' && e.key === trig.key) {
+        dispatchTrigger(id);
+        return;
+      }
+    }
+  }
+
+  function onMouseMove() {
+    clearTimeout(mouseStillTimer);
+    mouseStillTimer = setTimeout(() => dispatchTrigger('panel'), TRIGGERS.panel.durationMs);
+  }
+
+  // ── Resize ────────────────────────────────────────────────────────────────
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width  = W;
+    canvas.height = H;
+  }
+
+  // ── Control panel wiring ──────────────────────────────────────────────────
+  function wireControlPanel() {
+    const panel = document.getElementById('panel');
+    const closeBtn = document.getElementById('panel-close');
+    if (!panel || !closeBtn) return;
+    closeBtn.addEventListener('click', () => { panel.hidden = true; });
+
+    document.getElementById('ctl-count').addEventListener('input', (e) => {
+      CFG.count = parseInt(e.target.value, 10);
+      document.getElementById('lbl-count').textContent = CFG.count;
+      initRibbons();
+    });
+    document.getElementById('ctl-amp').addEventListener('input', (e) => {
+      CFG.maxAmplitude = parseFloat(e.target.value);
+      document.getElementById('lbl-amp').textContent = CFG.maxAmplitude.toFixed(2);
+    });
+    document.getElementById('ctl-hue').addEventListener('input', (e) => {
+      CFG.maxHueSpeed = parseFloat(e.target.value);
+      document.getElementById('lbl-hue').textContent = CFG.maxHueSpeed;
+    });
+    document.getElementById('ctl-opacity').addEventListener('input', (e) => {
+      CFG.maxOpacity = parseFloat(e.target.value);
+      document.getElementById('lbl-opacity').textContent = CFG.maxOpacity.toFixed(2);
+    });
+    document.getElementById('ctl-blur').addEventListener('input', (e) => {
+      CFG.blur = e.target.checked;
+    });
+  }
+
+  // ── Animation loop ────────────────────────────────────────────────────────
+  let lastTimestamp = null;
+  function loop(timestamp) {
+    if (lastTimestamp === null) lastTimestamp = timestamp;
+    const dt = Math.min(timestamp - lastTimestamp, 100);
+    lastTimestamp = timestamp;
+    updateRibbons(dt);
+    drawRibbons();
+    requestAnimationFrame(loop);
+  }
+
+  function init() {
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(resize, 100);
+    });
+    canvas.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('keydown', onKeyDown);
+    initRibbons();
+    wireControlPanel();
+    requestAnimationFrame(loop);
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+</script>
+{% endblock %}

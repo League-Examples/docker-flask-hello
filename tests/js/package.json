@@ -1,0 +1,13 @@
+{
+  "name": "interactive-art-pages-js-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JavaScript property-based tests for interactive art pages",
+  "scripts": {
+    "test": "jest --runInBand"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "fast-check": "3.22.0"
+  }
+}

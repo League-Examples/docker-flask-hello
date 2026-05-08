@@ -1,6 +1,26 @@
 {% extends "base.html" %}
 {% block content %}
-<pre>
+<style>
+  body { transition: background-color 400ms; }
+  pre#art { transition: transform 1s ease-out; will-change: transform; }
+  pre span.apex {
+    cursor: crosshair;
+    text-shadow: 0 0 6px #00ff99, 0 0 12px #00ff99;
+  }
+  span.thrust { opacity: 0.15; }
+  .twinkle {
+    position: fixed;
+    color: #00ff99;
+    font-family: monospace;
+    pointer-events: none;
+    animation: twinkle 2s ease-in-out infinite;
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.2; }
+    50%      { opacity: 1.0; }
+  }
+</style>
+<pre id="art">
           *
          /|\
         / | \
@@ -18,7 +38,117 @@
      /    *    \
     /___________\
    /_____________\
+   <span class="thrust">&#x25BC;</span>
 
   ~ Hello from space! ~
 </pre>
+<script>
+  function _spanify(pre) {
+    function walk(node) {
+      const children = [...node.childNodes];
+      for (const child of children) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent;
+          const frag = document.createDocumentFragment();
+          for (const ch of text) {
+            const s = document.createElement('span');
+            s.textContent = ch;
+            s.dataset.orig = ch;
+            frag.appendChild(s);
+          }
+          child.replaceWith(frag);
+        }
+      }
+    }
+    walk(pre);
+  }
+
+  const _buf = [];
+  let _bufTimer = null;
+  let _stars = [];
+
+  // Easter Egg A: Launch Sequence (3 2 1)
+  function _launch(pre) {
+    pre.style.transition = 'transform 1.5s cubic-bezier(0.2, 0, 0.8, 1)';
+    pre.style.transform = `translateY(-${window.innerHeight}px)`;
+    // Briefly flash background white
+    const origBg = document.body.style.backgroundColor;
+    document.body.style.backgroundColor = '#ffffff';
+    setTimeout(() => { document.body.style.backgroundColor = origBg || '#1a1a2e'; }, 80);
+    setTimeout(() => {
+      pre.style.transition = 'none';
+      pre.style.transform = `translateY(${window.innerHeight * 0.5}px)`;
+      requestAnimationFrame(() => {
+        pre.style.transition = 'transform 1s ease-out';
+        pre.style.transform = 'translateY(0)';
+      });
+    }, 1600);
+  }
+
+  // Easter Egg B: Star field (click apex)
+  function _starField() {
+    if (_stars.length > 0) {
+      // Already showing — second click clears
+      for (const s of _stars) s.remove();
+      _stars = [];
+      return;
+    }
+    for (let i = 0; i < 40; i++) {
+      const s = document.createElement('span');
+      s.className = 'twinkle';
+      s.textContent = '*';
+      s.style.left  = (Math.random() * window.innerWidth)  + 'px';
+      s.style.top   = (Math.random() * window.innerHeight) + 'px';
+      s.style.animationDuration = (1 + Math.random() * 3) + 's';
+      document.body.appendChild(s);
+      _stars.push(s);
+    }
+  }
+
+  // Easter Egg C: Transition to Boids
+  function _transitionTo(url) {
+    document.body.style.transition = 'background-color 400ms';
+    document.body.style.backgroundColor = '#000';
+    setTimeout(() => { window.location.href = url; }, 400);
+  }
+
+  function _checkSequence(seq) {
+    if (_buf.length < seq.length) return false;
+    const tail = _buf.slice(-seq.length);
+    return tail.every((k, i) => k === seq[i]);
+  }
+
+  function _onKey(e) {
+    _buf.push(e.key);
+    if (_buf.length > 20) _buf.shift();
+    clearTimeout(_bufTimer);
+    _bufTimer = setTimeout(() => { _buf.length = 0; }, 3000);
+
+    const pre = document.getElementById('art');
+    if (_checkSequence(['3','2','1'])) {
+      _buf.length = 0;
+      _launch(pre);
+      return;
+    }
+    if (e.key === 'b') {
+      _transitionTo('/boids');
+      return;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const pre = document.getElementById('art');
+    _spanify(pre);
+
+    // Tag the very first '*' (rocket apex) with the apex class
+    const spans = [...pre.querySelectorAll('span')];
+    const firstStar = spans.find(s => s.dataset.orig === '*');
+    if (firstStar) {
+      firstStar.classList.add('apex');
+      firstStar.addEventListener('click', _starField);
+    }
+
+    document.addEventListener('keydown', _onKey);
+  });
+</script>
 {% endblock %}

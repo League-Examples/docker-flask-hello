@@ -62,3 +62,63 @@ def test_unknown_route_returns_404(client):
     """Unknown paths should return 404."""
     response = client.get("/unknown")
     assert response.status_code == 404
+
+
+# --- Requirement 9: Dedicated routes for canvas pages ---
+
+def test_boids_route_returns_200(client):
+    """GET /boids should return HTTP 200."""
+    response = client.get("/boids")
+    assert response.status_code == 200
+
+
+def test_voronoi_route_returns_200(client):
+    """GET /voronoi should return HTTP 200."""
+    response = client.get("/voronoi")
+    assert response.status_code == 200
+
+
+def test_aurora_route_returns_200(client):
+    """GET /aurora should return HTTP 200."""
+    response = client.get("/aurora")
+    assert response.status_code == 200
+
+
+def test_boids_route_contains_data_page_marker(client):
+    """The /boids response body must contain the data-page="boids" marker (Req 9.1)."""
+    response = client.get("/boids")
+    assert b'data-page="boids"' in response.data
+
+
+def test_voronoi_route_contains_data_page_marker(client):
+    """The /voronoi response body must contain the data-page="voronoi" marker (Req 9.2)."""
+    response = client.get("/voronoi")
+    assert b'data-page="voronoi"' in response.data
+
+
+def test_aurora_route_contains_data_page_marker(client):
+    """The /aurora response body must contain the data-page="aurora" marker (Req 9.3)."""
+    response = client.get("/aurora")
+    assert b'data-page="aurora"' in response.data
+
+
+# --- Requirement 1.1: PAGES list integrity ---
+
+def test_pages_has_exactly_8_entries():
+    """PAGES must contain exactly 8 entries (5 ASCII + 3 canvas pages) (Req 1.1)."""
+    assert len(PAGES) == 8
+
+
+def test_pages_includes_boids():
+    """PAGES must include the boids canvas page path (Req 1.1)."""
+    assert "pages/boids.html" in PAGES
+
+
+def test_pages_includes_voronoi():
+    """PAGES must include the voronoi canvas page path (Req 1.1)."""
+    assert "pages/voronoi.html" in PAGES
+
+
+def test_pages_includes_aurora():
+    """PAGES must include the aurora canvas page path (Req 1.1)."""
+    assert "pages/aurora.html" in PAGES

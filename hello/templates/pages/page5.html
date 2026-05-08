@@ -1,6 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
-<pre>
+<style>
+  body { transition: background-color 400ms; }
+  pre#art { transition: transform 200ms; }
+
+  /* Storm clue: a deeper-current ≈≈ segment at lower opacity */
+  pre span.deep-current { opacity: 0.6; }
+
+  /* Bottle message */
+  .bottle {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 40px;
+    background: #0d0d1a;
+    border: 1px solid #00ff99;
+    color: #00ff99;
+    font-family: monospace;
+    padding: 8px 14px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 600ms;
+    z-index: 100;
+  }
+  .bottle.show { opacity: 1; }
+</style>
+<pre id="art">
                                   /\
     /\_______________________/\  /  \  /\
    /                           \/    \/  \
@@ -9,12 +34,137 @@
 /~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
 |  ~~  ~~  ~~   ~~   ~~~   ~~   ~~   ~~   ~~  ~~  |
 |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
-|  ~~   ~~   ~~   ~~    ~~    ~~   ~~   ~~   ~~   |
- \~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~./
+|  ~~   ~~   <span class="deep-current">&#x2248;&#x2248;</span>   ~~    ~~    ~~   ~~   ~~   ~~   |
+ \<span id="last-wave-row">~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~</span>./
   \     _____       _____      _____     _____   /
    \   |  _  |     |  _  |   |  _  |   |  _  | /
     \  | | | |     | | | |   | | | |   | | | |/
      \ |_____| ~ ~ |_____| ~ |_____| ~ |_____|/
       \____________________________________________/
 </pre>
+<script>
+  function _spanify(pre) {
+    function walk(node) {
+      const children = [...node.childNodes];
+      for (const child of children) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent;
+          const frag = document.createDocumentFragment();
+          for (const ch of text) {
+            const s = document.createElement('span');
+            s.textContent = ch;
+            s.dataset.orig = ch;
+            frag.appendChild(s);
+          }
+          child.replaceWith(frag);
+        }
+      }
+    }
+    walk(pre);
+  }
+
+  const _buf = [];
+  let _bufTimer = null;
+
+  // Easter Egg A: Storm mode
+  let _stormActive = false;
+  function _storm(pre) {
+    if (_stormActive) return;
+    _stormActive = true;
+    const origColor = pre.style.color;
+    const waveChars = ['~', '^', '≈', '∿'];
+    const allSpans = [...pre.querySelectorAll('span')];
+    const waveSpans = allSpans.filter(s => s.dataset.orig === '~');
+    const originals = waveSpans.map(s => s.textContent);
+
+    pre.style.color = '#aaddff';
+
+    let frame = 0;
+    const iv = setInterval(() => {
+      frame++;
+      waveSpans.forEach((s, i) => {
+        s.textContent = waveChars[(frame + i) % waveChars.length];
+      });
+      // Ship body wobble
+      pre.style.transform = `translateY(${Math.sin(frame * 0.5) * 4}px)`;
+    }, 150);
+
+    setTimeout(() => {
+      clearInterval(iv);
+      pre.style.transform = '';
+      pre.style.color = origColor;
+      waveSpans.forEach((s, i) => { s.textContent = originals[i]; });
+      _stormActive = false;
+    }, 5000);
+  }
+
+  // Easter Egg B: Message in a Bottle (triple-click)
+  let _clicks = 0, _clickTimer = null;
+  function _onHullClick() {
+    _clicks++;
+    clearTimeout(_clickTimer);
+    _clickTimer = setTimeout(() => { _clicks = 0; }, 600);
+    if (_clicks >= 3) {
+      _clicks = 0;
+      _showBottle();
+    }
+  }
+  function _showBottle() {
+    const div = document.createElement('div');
+    div.className = 'bottle';
+    div.textContent = '📜 "hello from the other side"';
+    document.body.appendChild(div);
+    requestAnimationFrame(() => div.classList.add('show'));
+    setTimeout(() => div.classList.remove('show'), 4000);
+    setTimeout(() => div.remove(), 4800);
+  }
+
+  // Easter Egg C: Transition to Aurora
+  function _transitionTo(url) {
+    document.body.style.transition = 'background-color 400ms';
+    document.body.style.backgroundColor = '#000';
+    setTimeout(() => { window.location.href = url; }, 400);
+  }
+
+  function _checkSequence(seq) {
+    if (_buf.length < seq.length) return false;
+    const tail = _buf.slice(-seq.length);
+    return tail.every((k, i) => k === seq[i]);
+  }
+
+  function _onKey(e) {
+    _buf.push(e.key);
+    if (_buf.length > 20) _buf.shift();
+    clearTimeout(_bufTimer);
+    _bufTimer = setTimeout(() => { _buf.length = 0; }, 3000);
+
+    const pre = document.getElementById('art');
+    if (_checkSequence(['s','t','o','r','m'])) {
+      _buf.length = 0;
+      _storm(pre);
+      return;
+    }
+    if (e.key === 'a') {
+      _transitionTo('/aurora');
+      return;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const pre = document.getElementById('art');
+    _spanify(pre);
+
+    // Apply title attribute clue to the spans of the last wave row
+    const lastRow = document.getElementById('last-wave-row');
+    if (lastRow) {
+      const rowSpans = [...lastRow.querySelectorAll('span')];
+      for (const s of rowSpans) {
+        if (s.dataset.orig === '~') s.title = 'the sea keeps secrets';
+      }
+    }
+
+    document.addEventListener('keydown', _onKey);
+    pre.addEventListener('click', _onHullClick);
+  });
+</script>
 {% endblock %}

@@ -1,8 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
-<pre>
+<style>
+  body { transition: background-color 400ms; }
+  pre.dance { animation: robot-dance 0.4s ease-in-out 5; }
+  @keyframes robot-dance {
+    0%   { transform: translateX(0); }
+    25%  { transform: translateX(-8px); }
+    75%  { transform: translateX(8px); }
+    100% { transform: translateX(0); }
+  }
+  pre span.arm-pipe { /* tooltip via title attribute */ }
+</style>
+<pre id="art">
     .-----------.
-    |  [O]  [O] |
+    |  [O]  [<span id="zero-eye">0</span>] |
     |     __    |
     |    (__)   |
     '-----------'
@@ -13,6 +24,123 @@
    /|  |     |  |\
   /_|__|     |__|_\
 
-  ROBOT SAYS: Hello!
+  ROBOT SAYS: <span id="robot-caption">Hello!</span>
 </pre>
+<script>
+  function _spanify(pre) {
+    function walk(node) {
+      const children = [...node.childNodes];
+      for (const child of children) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent;
+          const frag = document.createDocumentFragment();
+          for (const ch of text) {
+            const s = document.createElement('span');
+            s.textContent = ch;
+            s.dataset.orig = ch;
+            frag.appendChild(s);
+          }
+          child.replaceWith(frag);
+        }
+      }
+    }
+    walk(pre);
+  }
+
+  const _buf = [];
+  let _bufTimer = null;
+
+  // Easter Egg A: Robot Malfunction (sequence 'error')
+  let _malfunctionActive = false;
+  function _malfunction(pre) {
+    if (_malfunctionActive) return;
+    _malfunctionActive = true;
+    const original = pre.innerHTML;
+    pre.style.color = '#ff4444';
+    pre.style.textShadow = '0 0 8px #ff4444';
+    const errLines = [
+      'ERR_0x4F: HELLO.EXE NOT FOUND',
+      'STACK TRACE: ...',
+      'KERNEL PANIC',
+      'REBOOTING...',
+    ];
+    let i = 0;
+    pre.textContent = '';
+    const iv = setInterval(() => {
+      pre.textContent += errLines[i] + '\n';
+      i++;
+      if (i >= errLines.length) {
+        clearInterval(iv);
+        setTimeout(() => {
+          pre.style.color = '';
+          pre.style.textShadow = '';
+          pre.innerHTML = original;
+          const cap = document.getElementById('robot-caption');
+          if (cap) cap.textContent = 'Hello, again!';
+          _malfunctionActive = false;
+        }, 1500);
+      }
+    }, 400);
+  }
+
+  // Easter Egg B: Robot Dance (double-click)
+  function _dance(pre) {
+    pre.classList.add('dance');
+    const cap = document.getElementById('robot-caption');
+    const orig = cap ? cap.textContent : null;
+    if (cap) cap.textContent = '🕺';
+    setTimeout(() => {
+      pre.classList.remove('dance');
+      if (cap && orig) cap.textContent = orig;
+    }, 2000);
+  }
+
+  // Easter Egg C: Transition to Aurora ('a' key)
+  function _transitionTo(url) {
+    document.body.style.transition = 'background-color 400ms';
+    document.body.style.backgroundColor = '#000';
+    setTimeout(() => { window.location.href = url; }, 400);
+  }
+
+  function _checkSequence(seq) {
+    if (_buf.length < seq.length) return false;
+    const tail = _buf.slice(-seq.length);
+    return tail.every((k, i) => k === seq[i]);
+  }
+
+  function _onKey(e) {
+    _buf.push(e.key);
+    if (_buf.length > 20) _buf.shift();
+    clearTimeout(_bufTimer);
+    _bufTimer = setTimeout(() => { _buf.length = 0; }, 3000);
+
+    const pre = document.getElementById('art');
+    if (_checkSequence(['e','r','r','o','r'])) {
+      _buf.length = 0;
+      _malfunction(pre);
+      return;
+    }
+    if (e.key === 'a') {
+      _transitionTo('/aurora');
+      return;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const pre = document.getElementById('art');
+    _spanify(pre);
+
+    // Tag arm '|' chars with title attribute for tooltip clue
+    const spans = [...pre.querySelectorAll('span')];
+    for (const s of spans) {
+      if (s.dataset.orig === '|') {
+        s.title = '...';
+        s.classList.add('arm-pipe');
+      }
+    }
+
+    document.addEventListener('keydown', _onKey);
+    pre.addEventListener('dblclick', () => _dance(pre));
+  });
+</script>
 {% endblock %}

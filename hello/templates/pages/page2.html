@@ -1,6 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
-<pre>
+<style>
+  /* Cat eyes get pointer cursor + faint glow as the clue */
+  pre span.eye {
+    cursor: pointer;
+    text-shadow: 0 0 3px #00ff99, 0 0 6px #00ff99;
+  }
+  /* Tilde clue: slow purr-like pulse */
+  pre span.tilde { animation: purr 3s ease-in-out infinite; }
+  @keyframes purr {
+    0%, 100% { opacity: 0.7; }
+    50%      { opacity: 1.0; }
+  }
+  /* Faint dot at end of last line */
+  pre span.dot-clue { opacity: 0.12; }
+
+  body { transition: background-color 400ms; }
+
+  body.nyan {
+    animation: nyan-rotate 0.5s linear infinite;
+  }
+  @keyframes nyan-rotate {
+    0%   { filter: hue-rotate(0deg); }
+    100% { filter: hue-rotate(360deg); }
+  }
+</style>
+<pre id="art">
     /\_____/\
    /  o   o  \
   ( ==  ^  == )
@@ -11,6 +36,130 @@
  /  |_______|  \
 
   ~ Hello, World! ~
-   ( from a cat )
+   <span id="caption">( from a cat )</span><span class="dot-clue">&middot;</span>
 </pre>
+<script>
+  function _spanify(pre) {
+    // Skip if the pre already contains element children (we keep the caption
+    // span unmodified). Walk text nodes only.
+    function walk(node) {
+      const children = [...node.childNodes];
+      for (const child of children) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent;
+          const frag = document.createDocumentFragment();
+          for (const ch of text) {
+            const s = document.createElement('span');
+            s.textContent = ch;
+            s.dataset.orig = ch;
+            frag.appendChild(s);
+          }
+          child.replaceWith(frag);
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          // Keep elements like the caption span as-is
+        }
+      }
+    }
+    walk(pre);
+  }
+
+  const _buf = [];
+  let _bufTimer = null;
+  let _mouseStillTimer = null;
+
+  // Easter Egg A: Cat speaks
+  const catLines = [
+    '( from a cat )',
+    '( meow? )',
+    '( MEOW )',
+    '( I AM THE CAT )',
+    '( hello world is mine )',
+    '( ...from a cat )',
+  ];
+  let catIdx = 0;
+  function _onEyeClick() {
+    catIdx = (catIdx + 1) % catLines.length;
+    const cap = document.getElementById('caption');
+    if (cap) cap.textContent = catLines[catIdx];
+  }
+
+  // Easter Egg B: Nyan mode
+  let _nyanActive = false;
+  function _nyan(pre) {
+    if (_nyanActive) return;
+    _nyanActive = true;
+    document.body.classList.add('nyan');
+    const trail = [];
+    const trailIv = setInterval(() => {
+      const star = document.createElement('span');
+      star.textContent = '*';
+      star.style.cssText = 'position:fixed;color:hsl('+(Math.random()*360)+',100%,70%);font-family:monospace;font-size:1.2rem;pointer-events:none;';
+      star.style.left  = (Math.random() * window.innerWidth)  + 'px';
+      star.style.top   = (Math.random() * window.innerHeight) + 'px';
+      document.body.appendChild(star);
+      trail.push(star);
+    }, 80);
+    setTimeout(() => {
+      clearInterval(trailIv);
+      document.body.classList.remove('nyan');
+      for (const s of trail) s.remove();
+      _nyanActive = false;
+    }, 5000);
+  }
+
+  // Easter Egg C: Mouse-still over cat → /voronoi
+  function _transitionTo(url) {
+    document.body.style.transition = 'background-color 400ms';
+    document.body.style.backgroundColor = '#000';
+    setTimeout(() => { window.location.href = url; }, 400);
+  }
+
+  function _checkSequence(seq) {
+    if (_buf.length < seq.length) return false;
+    const tail = _buf.slice(-seq.length);
+    return tail.every((k, i) => k === seq[i]);
+  }
+
+  function _onKey(e) {
+    _buf.push(e.key);
+    if (_buf.length > 20) _buf.shift();
+    clearTimeout(_bufTimer);
+    _bufTimer = setTimeout(() => { _buf.length = 0; }, 3000);
+
+    if (_checkSequence(['n','y','a','n'])) {
+      _buf.length = 0;
+      _nyan(document.getElementById('art'));
+      return;
+    }
+  }
+
+  function _onMouseMove() {
+    clearTimeout(_mouseStillTimer);
+    _mouseStillTimer = setTimeout(() => _transitionTo('/voronoi'), 4000);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const pre = document.getElementById('art');
+    _spanify(pre);
+
+    // Tag eye 'o' characters and tilde characters with classes
+    const spans = [...pre.querySelectorAll('span')];
+    let oCount = 0;
+    for (const s of spans) {
+      if (s.dataset.orig === 'o' && oCount < 2) {
+        // First two 'o' chars belong to the eyes line
+        s.classList.add('eye');
+        s.addEventListener('click', _onEyeClick);
+        oCount++;
+      }
+      if (s.dataset.orig === '~') {
+        s.classList.add('tilde');
+      }
+    }
+
+    document.addEventListener('keydown', _onKey);
+    pre.addEventListener('mousemove', _onMouseMove);
+    pre.addEventListener('mouseleave', () => clearTimeout(_mouseStillTimer));
+  });
+</script>
 {% endblock %}

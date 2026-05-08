@@ -1,10 +1,171 @@
 {% extends "base.html" %}
 {% block content %}
-<pre>
+<style>
+  /* Easter egg clue: faint flicker on the W in "World" */
+  pre span.flicker { animation: flicker-w 4s ease-in-out infinite; }
+  @keyframes flicker-w {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.85; }
+  }
+  /* Faint clue under tagline (Easter egg B) */
+  p.dots {
+    color: #00ff99;
+    opacity: 0.15;
+    margin-top: 0.2rem;
+    font-family: monospace;
+    text-align: center;
+  }
+  body { transition: background-color 400ms; }
+</style>
+<pre id="art">
  _   _      _ _        __        __         _     _
 | | | | ___| | | ___   \ \      / /__  _ __| | __| |
 | |_| |/ _ \ | |/ _ \   \ \ /\ / / _ \| '__| |/ _` |
 |  _  |  __/ | | (_) |   \ V  V / (_) | |  | | (_| |
 |_| |_|\___|_|_|\___/     \_/\_/ \___/|_|  |_|\__,_|
 </pre>
+<p class="dots">&middot; &middot; &middot;</p>
+<script>
+  // ── Shared spanify + key buffer ──────────────────────────────────────────
+  function _spanify(pre) {
+    const text = pre.textContent;
+    pre.textContent = '';
+    for (const ch of text) {
+      const s = document.createElement('span');
+      s.textContent = ch;
+      s.dataset.orig = ch;
+      pre.appendChild(s);
+    }
+  }
+  const _buf = [];
+  let _bufTimer = null;
+
+  // ── Easter Egg A: Glitch Mode ────────────────────────────────────────────
+  let _glitchActive = false;
+  function _glitch(pre) {
+    if (_glitchActive) return;
+    _glitchActive = true;
+    const spans = [...pre.querySelectorAll('span')];
+    const originals = spans.map(s => s.dataset.orig);
+    const glitchChars = '!@#$%^&*<>?/\\|[]{}~`';
+    let frame = 0;
+    const iv = setInterval(() => {
+      frame++;
+      spans.forEach((s, i) => {
+        if (Math.random() < 0.3) {
+          s.textContent = glitchChars[Math.floor(Math.random() * glitchChars.length)];
+          s.style.color = `hsl(${Math.random() * 360}, 100%, 60%)`;
+        } else {
+          s.textContent = originals[i];
+          s.style.color = '';
+        }
+      });
+      if (frame > 50) {
+        clearInterval(iv);
+        spans.forEach((s, i) => { s.textContent = originals[i]; s.style.color = ''; });
+        _glitchActive = false;
+      }
+    }, 60);
+  }
+
+  // ── Easter Egg B: Typewriter Reveal ──────────────────────────────────────
+  function _typewriter(pre) {
+    const spans = [...pre.querySelectorAll('span')];
+    const originals = spans.map(s => s.dataset.orig);
+    pre.style.transition = 'opacity 300ms';
+    pre.style.opacity = '0';
+    setTimeout(() => {
+      spans.forEach(s => { s.textContent = ''; });
+      pre.style.opacity = '1';
+      let i = 0;
+      const cursor = document.createElement('span');
+      cursor.textContent = '_';
+      cursor.style.animation = 'blink 0.6s infinite';
+      pre.appendChild(cursor);
+      const iv = setInterval(() => {
+        if (i < spans.length) {
+          spans[i].textContent = originals[i];
+          i++;
+        } else {
+          clearInterval(iv);
+          cursor.remove();
+          // Reveal hidden message
+          const msg = document.createElement('p');
+          msg.textContent = 'you found it';
+          msg.style.cssText = 'color:#00ff99;opacity:0.5;font-family:monospace;text-align:center;transition:opacity 1s;';
+          document.body.appendChild(msg);
+          setTimeout(() => { msg.style.opacity = '0'; }, 3000);
+          setTimeout(() => { msg.remove(); }, 4000);
+        }
+      }, 30);
+    }, 300);
+  }
+
+  // ── Easter Egg C: Transition to Boids ────────────────────────────────────
+  function _transitionTo(url) {
+    document.body.style.transition = 'background-color 400ms';
+    document.body.style.backgroundColor = '#000';
+    setTimeout(() => { window.location.href = url; }, 400);
+  }
+
+  // ── Trigger checks ───────────────────────────────────────────────────────
+  function _checkSequence(seq) {
+    if (_buf.length < seq.length) return false;
+    const tail = _buf.slice(-seq.length);
+    return tail.every((k, i) => k === seq[i]);
+  }
+
+  function _onKey(e) {
+    _buf.push(e.key);
+    if (_buf.length > 20) _buf.shift();
+    clearTimeout(_bufTimer);
+    _bufTimer = setTimeout(() => { _buf.length = 0; }, 3000);
+
+    const pre = document.getElementById('art');
+    if (_checkSequence(['h','e','l','l','o'])) {
+      _buf.length = 0;
+      _typewriter(pre);
+      return;
+    }
+    if (e.key === 'b') {
+      _transitionTo('/boids');
+      return;
+    }
+  }
+
+  // Triple-click anywhere → glitch
+  let _clicks = 0, _clickTimer = null;
+  function _onClick() {
+    _clicks++;
+    clearTimeout(_clickTimer);
+    _clickTimer = setTimeout(() => { _clicks = 0; }, 600);
+    if (_clicks >= 3) {
+      _clicks = 0;
+      _glitch(document.getElementById('art'));
+    }
+  }
+
+  // ── Bootstrap ────────────────────────────────────────────────────────────
+  // Add @keyframes blink dynamically so the cursor blink doesn't need a CSS file.
+  const _styleTag = document.createElement('style');
+  _styleTag.textContent = '@keyframes blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }';
+  document.head.appendChild(_styleTag);
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const pre = document.getElementById('art');
+    _spanify(pre);
+    // Tag a "W" in "World" with the flicker class for the clue
+    const spans = [...pre.querySelectorAll('span')];
+    // Find the first 'W' (glyph appears in "World" rendered as block letters,
+    // but the source text starts with "_" - the literal W appears in the word " W"
+    // Find first span whose char is 'W' or '\\' (the W ascii). We'll use 'W' if
+    // present, otherwise tag the first occurrence of 'V'.
+    let wIdx = spans.findIndex(s => s.dataset.orig === 'W');
+    if (wIdx < 0) wIdx = spans.findIndex(s => s.dataset.orig === 'V');
+    if (wIdx >= 0) spans[wIdx].classList.add('flicker');
+
+    document.addEventListener('keydown', _onKey);
+    document.addEventListener('click', _onClick);
+  });
+</script>
 {% endblock %}

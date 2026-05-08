@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  body { margin: 0; padding: 0; overflow: hidden; display: block; }
+  .tagline { display: none; }
+  canvas { display: block; transition: opacity 300ms; }
+
+  .control-panel {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #0d0d1a;
+    border: 1px solid #00ff99;
+    color: #00ff99;
+    font-family: monospace;
+    padding: 16px;
+    border-radius: 6px;
+    z-index: 100;
+    min-width: 220px;
+  }
+  .control-panel h3 { margin: 0 0 8px; font-size: 1rem; }
+  .control-panel label { display: block; margin: 8px 0 2px; font-size: 0.85rem; }
+  .control-panel input[type=range] { width: 100%; accent-color: #00ff99; }
+  .control-panel input[type=checkbox] { accent-color: #00ff99; }
+  .control-panel button#panel-close {
+    position: absolute; top: 6px; right: 8px;
+    background: transparent; border: none; color: #00ff99;
+    font-family: monospace; font-size: 1rem; cursor: pointer;
+  }
+</style>
+<canvas id="c" data-page="voronoi"></canvas>
+<div id="panel" class="control-panel" hidden>
+  <button id="panel-close" type="button" aria-label="Close">&#x2715;</button>
+  <h3>Controls</h3>
+  <label>Cell Count: <span id="lbl-count">18</span></label>
+  <input id="ctl-count" type="range" min="6" max="40" value="18" step="1">
+  <label>Speed: <span id="lbl-speed">2.0</span></label>
+  <input id="ctl-speed" type="range" min="0.5" max="6" value="2" step="0.1">
+  <label>Softness: <span id="lbl-softness">30</span></label>
+  <input id="ctl-softness" type="range" min="5" max="80" value="30" step="1">
+  <label>Lightness: <span id="lbl-light">50</span></label>
+  <input id="ctl-light" type="range" min="35" max="65" value="50" step="1">
+  <label>Saturation: <span id="lbl-sat">80</span></label>
+  <input id="ctl-sat" type="range" min="50" max="100" value="80" step="1">
+</div>
+<script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6.0.4/dist/d3-delaunay.min.js"></script>
+<script>
+  // ── Canvas setup ──────────────────────────────────────────────────────────
+  const canvas = document.getElementById('c');
+  const ctx    = canvas ? canvas.getContext('2d') : null;
+  let W = window.innerWidth, H = window.innerHeight;
+  if (!canvas || !ctx) {
+    document.body.innerHTML =
+      '<p style="color:#00ff99;font-family:monospace;padding:2rem">Canvas not supported.</p>';
+  } else {
+    canvas.width  = W;
+    canvas.height = H;
+  }
+
+  const CFG = {
+    count:      18,
+    maxSpeed:   2.0,
+    saturation: 80,
+    lightness:  50,
+    blurWidth:  30,
+    monoHue:    null,   // when set, all cells render with this hue (mono transform)
+  };
+
+  const TRIGGERS = {
+    transform_storm:    { type: 'key',      key: 's' },
+    transform_mono:     { type: 'sequence', keys: ['m','o','n','o'] },
+    transition_aurora:  { type: 'key',      key: 'a' },
+    panel:              { type: 'still',    durationMs: 3000 },
+  };
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let seeds = [];
+  let activeTransform = null;
+  let savedCFG = null;
+  let keyBuffer = [];
+  let keyBufferTimer = null;
+  let mouseStillTimer = null;
+
+  function applyTransform(id, cfg) {
+    switch (id) {
+      case 'transform_storm':
+        cfg.maxSpeed *= 4;
+        cfg.saturation = 30;
+        break;
+      case 'transform_mono':
+        // pick a hue and lock all cells to it
+        cfg.monoHue = Math.random() * 360;
+        break;
+    }
+  }
+
+  // ── Hue spacing (≥ 25°) ───────────────────────────────────────────────────
+  function assignHues(count) {
+    const MAX_DISTINCT = 14;
+    const distinctCount = Math.min(count, MAX_DISTINCT);
+    const stride = 360 / distinctCount;
+    const offset = Math.random() * 360;
+    const palette = [];
+    for (let i = 0; i < distinctCount; i++) {
+      palette.push((offset + i * stride) % 360);
+    }
+    const hues = [];
+    for (let i = 0; i < count; i++) hues.push(palette[i % distinctCount]);
+    return hues;
+  }
+
+  function initSeeds() {
+    const hues = assignHues(CFG.count);
+    seeds = [];
+    for (let i = 0; i < CFG.count; i++) {
+      const speed = CFG.maxSpeed;
+      seeds.push({
+        x:   Math.random() * W,
+        y:   Math.random() * H,
+        vx:  (Math.random() * 2 - 1) * speed,
+        vy:  (Math.random() * 2 - 1) * speed,
+        hue: hues[i],
+        // Per-cell pulse phase used by the clue overlay
+        pulsePhase: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
+  function updateSeeds(dt) {
+    const scale = dt / 16.67;
+    for (const s of seeds) {
+      s.x += s.vx * scale;
+      s.y += s.vy * scale;
+      if (s.x < 0)      { s.x = 0; s.vx =  Math.abs(s.vx); }
+      else if (s.x > W) { s.x = W; s.vx = -Math.abs(s.vx); }
+      if (s.y < 0)      { s.y = 0; s.vy =  Math.abs(s.vy); }
+      else if (s.y > H) { s.y = H; s.vy = -Math.abs(s.vy); }
+    }
+  }
+
+  function buildDelaunay(seedArr) {
+    if ((typeof d3 === 'undefined' || typeof d3.Delaunay === 'undefined')) return null;
+    const points = new Float64Array(seedArr.flatMap(s => [s.x, s.y]));
+    const delaunay = new d3.Delaunay(points);
+    const voronoi  = delaunay.voronoi([0, 0, W, H]);
+    return { delaunay, voronoi };
+  }
+
+  function drawCell(ctx, polygon, seed, neighbors, seedArr) {
+    const sat   = CFG.saturation;
+    const light = CFG.lightness;
+    const hue   = (CFG.monoHue !== null) ? CFG.monoHue : seed.hue;
+
+    ctx.beginPath();
+    ctx.moveTo(polygon[0][0], polygon[0][1]);
+    for (let k = 1; k < polygon.length; k++) ctx.lineTo(polygon[k][0], polygon[k][1]);
+    ctx.closePath();
+    ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(polygon[0][0], polygon[0][1]);
+    for (let k = 1; k < polygon.length; k++) ctx.lineTo(polygon[k][0], polygon[k][1]);
+    ctx.closePath();
+
+    ctx.save();
+    ctx.clip();
+    for (const j of neighbors) {
+      const nb   = seedArr[j];
+      const nbHue = (CFG.monoHue !== null) ? CFG.monoHue : nb.hue;
+      const midX = (seed.x + nb.x) / 2;
+      const midY = (seed.y + nb.y) / 2;
+      const grad = ctx.createRadialGradient(midX, midY, 0, midX, midY, CFG.blurWidth);
+      grad.addColorStop(0, `hsla(${nbHue}, ${sat}%, ${light}%, 0.6)`);
+      grad.addColorStop(1, `hsla(${nbHue}, ${sat}%, ${light}%, 0)`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
+
+  // Faint clues: one cell pulses at a different rhythm, plus a small glyph
+  // near the first seed point. Both at globalAlpha ≤ 0.25 per Req 5.2/5.5.
+  function drawClues(ctx, W, H) {
+    if (seeds.length === 0) return;
+    const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+
+    ctx.save();
+    // Clue 1: a soft pulsing dot on the first seed (different rhythm than cells)
+    const s0 = seeds[0];
+    const pulse = 0.5 + 0.5 * Math.sin(t * 0.7 + s0.pulsePhase);
+    ctx.globalAlpha = 0.20 * pulse;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(s0.x, s0.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Clue 2: tiny glyph near the second seed (a faint ".")
+    if (seeds.length > 1) {
+      const s1 = seeds[1];
+      ctx.globalAlpha = 0.18;
+      ctx.font = '14px monospace';
+      ctx.fillStyle = '#00ff99';
+      ctx.fillText('.', s1.x + 6, s1.y - 6);
+    }
+    ctx.restore();
+  }
+
+  function drawVoronoi() {
+    ctx.clearRect(0, 0, W, H);
+    if ((typeof d3 === 'undefined' || typeof d3.Delaunay === 'undefined')) {
+      ctx.fillStyle = '#00ff99';
+      ctx.font = '1rem monospace';
+      ctx.fillText('Voronoi library failed to load.', 20, 40);
+      return;
+    }
+    const result = buildDelaunay(seeds);
+    if (!result) return;
+    const { delaunay, voronoi } = result;
+    for (let i = 0; i < seeds.length; i++) {
+      const polygon = voronoi.cellPolygon(i);
+      if (!polygon) continue;
+      drawCell(ctx, polygon, seeds[i], delaunay.neighbors(i), seeds);
+    }
+    drawClues(ctx, W, H);
+  }
+
+  // ── Easter egg handlers ───────────────────────────────────────────────────
+  function handleTransform(id) {
+    if (activeTransform === id) {
+      Object.assign(CFG, savedCFG);
+      savedCFG = null;
+      activeTransform = null;
+    } else {
+      if (savedCFG !== null) Object.assign(CFG, savedCFG);
+      savedCFG = Object.assign({}, CFG);
+      applyTransform(id, CFG);
+      activeTransform = id;
+    }
+  }
+
+  function handleTransition(url) {
+    canvas.style.opacity = '0';
+    setTimeout(() => { window.location.href = url; }, 300);
+  }
+
+  function handlePanelToggle() {
+    const panel = document.getElementById('panel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+  }
+
+  function dispatchTrigger(id) {
+    if (id === 'panel') return handlePanelToggle();
+    if (id === 'transition_aurora') return handleTransition('/aurora');
+    if (id.startsWith('transform_')) return handleTransform(id);
+  }
+
+  function onKeyDown(e) {
+    keyBuffer.push(e.key);
+    if (keyBuffer.length > 20) keyBuffer.shift();
+    clearTimeout(keyBufferTimer);
+    keyBufferTimer = setTimeout(() => { keyBuffer = []; }, 3000);
+
+    for (const [id, trig] of Object.entries(TRIGGERS)) {
+      if (trig.type !== 'sequence') continue;
+      const seq = trig.keys;
+      if (keyBuffer.length >= seq.length) {
+        const tail = keyBuffer.slice(-seq.length);
+        if (tail.every((k, i) => k === seq[i])) {
+          keyBuffer = [];
+          clearTimeout(keyBufferTimer);
+          dispatchTrigger(id);
+          return;
+        }
+      }
+    }
+    for (const [id, trig] of Object.entries(TRIGGERS)) {
+      if (trig.type === 'key' && e.key === trig.key) {
+        dispatchTrigger(id);
+        return;
+      }
+    }
+  }
+
+  function onMouseMove() {
+    clearTimeout(mouseStillTimer);
+    mouseStillTimer = setTimeout(() => dispatchTrigger('panel'), TRIGGERS.panel.durationMs);
+  }
+
+  // ── Resize ────────────────────────────────────────────────────────────────
+  function resize() {
+    const oldW = W, oldH = H;
+    for (const s of seeds) { s.x /= oldW; s.y /= oldH; }
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width  = W;
+    canvas.height = H;
+    for (const s of seeds) { s.x *= W; s.y *= H; }
+  }
+
+  // ── Control panel wiring ──────────────────────────────────────────────────
+  function wireControlPanel() {
+    const panel = document.getElementById('panel');
+    const closeBtn = document.getElementById('panel-close');
+    if (!panel || !closeBtn) return;
+    closeBtn.addEventListener('click', () => { panel.hidden = true; });
+
+    const ctlCount = document.getElementById('ctl-count');
+    const ctlSpeed = document.getElementById('ctl-speed');
+    const ctlSoft  = document.getElementById('ctl-softness');
+    const ctlLight = document.getElementById('ctl-light');
+    const ctlSat   = document.getElementById('ctl-sat');
+
+    ctlCount.addEventListener('input', (e) => {
+      CFG.count = parseInt(e.target.value, 10);
+      document.getElementById('lbl-count').textContent = CFG.count;
+      initSeeds();
+    });
+    ctlSpeed.addEventListener('input', (e) => {
+      CFG.maxSpeed = parseFloat(e.target.value);
+      document.getElementById('lbl-speed').textContent = CFG.maxSpeed.toFixed(1);
+    });
+    ctlSoft.addEventListener('input', (e) => {
+      CFG.blurWidth = parseInt(e.target.value, 10);
+      document.getElementById('lbl-softness').textContent = CFG.blurWidth;
+    });
+    ctlLight.addEventListener('input', (e) => {
+      CFG.lightness = parseInt(e.target.value, 10);
+      document.getElementById('lbl-light').textContent = CFG.lightness;
+    });
+    ctlSat.addEventListener('input', (e) => {
+      CFG.saturation = parseInt(e.target.value, 10);
+      document.getElementById('lbl-sat').textContent = CFG.saturation;
+    });
+  }
+
+  // ── Animation loop ────────────────────────────────────────────────────────
+  let lastTimestamp = null;
+  function loop(timestamp) {
+    if (lastTimestamp === null) lastTimestamp = timestamp;
+    const dt = Math.min(timestamp - lastTimestamp, 100);
+    lastTimestamp = timestamp;
+    updateSeeds(dt);
+    drawVoronoi();
+    requestAnimationFrame(loop);
+  }
+
+  function init() {
+    initSeeds();
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(resize, 100);
+    });
+    canvas.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('keydown', onKeyDown);
+    wireControlPanel();
+    requestAnimationFrame(loop);
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+</script>
+{% endblock %}
